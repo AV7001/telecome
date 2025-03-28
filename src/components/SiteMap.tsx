@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import { supabase } from '../lib/supabase';
-import { ArrowLeft, PlusCircle } from 'lucide-react';
+import { ArrowLeft, ArrowLeftCircle, PlusCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
+import * as turf from '@turf/turf';
 import 'react-toastify/dist/ReactToastify.css';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { CircleIcon } from 'lucide-react';
+import { LatLngExpression } from 'leaflet';
 
 // Fix for default marker icons in React Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -29,7 +32,21 @@ interface Point {
   latitude: number;
   longitude: number;
   description: string;
+  site_id: string;
 }
+
+interface AllPoints extends Array<[number, number]> {}
+
+// Add custom icon for manual points
+const manualPointIcon = new L.Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+  shadowSize: [41, 41],
+  shadowAnchor: [12, 41]
+});
 
 export function SiteMap() {
   const [sites, setSites] = useState<Site[]>([]);
@@ -37,7 +54,44 @@ export function SiteMap() {
   const [loading, setLoading] = useState(true);
   const [center, setCenter] = useState<[number, number]>([27.7172, 85.3240]);
   const [points, setPoints] = useState<Point[]>([]);
+  const [selectedLocations, setSelectedLocations] = useState<Array<Site | Point>>([]);
   const navigate = useNavigate();
+
+  const calculateDistance = (point1: Point, point2: Point): number => {
+    const from = turf.point([point1.longitude, point1.latitude]);
+    const to = turf.point([point2.longitude, point2.latitude]);
+    return turf.distance(from, to, { units: 'kilometers' });
+  };
+
+  const calculateTotalDistance = (allPoints: AllPoints): number => {
+    let totalDistance = 0;
+    for (let i = 0; i < allPoints.length - 1; i++) {
+      const point1 = { latitude: allPoints[i][0], longitude: allPoints[i][1] };
+      const point2 = { latitude: allPoints[i + 1][0], longitude: allPoints[i + 1][1] };
+      totalDistance += calculateDistance(point1 as Point, point2 as Point);
+    }
+    return totalDistance;
+  };
+
+  const getAllPoints = (): AllPoints => {
+    const allPoints: AllPoints = [];
+    
+    // Add site points if they have coordinates
+    sites.forEach(site => {
+      if (site.latitude && site.longitude) {
+        allPoints.push([site.latitude, site.longitude]);
+      }
+    });
+
+    // Add manual points if a site is selected
+    if (selectedSite) {
+      points.forEach(point => {
+        allPoints.push([point.latitude, point.longitude]);
+      });
+    }
+
+    return allPoints;
+  };
 
   useEffect(() => {
     const loadSites = async () => {
@@ -92,6 +146,45 @@ export function SiteMap() {
     }
   };
 
+  const handleLocationClick = (location: Site | Point) => {
+    setSelectedLocations(prev => {
+      // If location is already selected, remove it
+      if (prev.find(p => 'latitude' in p && 'longitude' in p && 
+          p.latitude === location.latitude && 
+          p.longitude === location.longitude)) {
+        return prev.filter(p => !('latitude' in p && 'longitude' in p && 
+          p.latitude === location.latitude && 
+          p.longitude === location.longitude));
+      }
+      // If we already have 2 locations, replace the first one
+      if (prev.length === 2) {
+        return [location];
+      }
+      // Add the new location
+      return [...prev, location];
+    });
+  };
+
+  const handleDeletePoint = async (pointId: string) => {
+    if (!window.confirm('Are you sure you want to delete this point?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('site_points')
+        .delete()
+        .eq('id', pointId);
+
+      if (error) throw error;
+
+      // Update points list after deletion
+      setPoints(points.filter(point => point.id !== pointId));
+      toast.success('Point deleted successfully');
+    } catch (error) {
+      console.error('Error deleting point:', error);
+      toast.error('Failed to delete point');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -115,7 +208,26 @@ export function SiteMap() {
         </div>
 
         <div className="bg-white rounded-lg shadow-lg p-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-6">Site Locations</h1>
+          <div className="flex justify-between items-center mb-6">
+            <h1 className="text-2xl font-bold text-gray-900">Site Locations</h1>
+            
+            {/* Add distance summary panel */}
+            {selectedLocations.length === 2 && (
+              <div className="bg-blue-50 px-4 py-2 rounded-lg">
+                <p className="text-blue-800 font-medium">
+                  Distance: {calculateDistance(
+                    selectedLocations[0] as Point,
+                    selectedLocations[1] as Point
+                  ).toFixed(2)} kilometers
+                </p>
+                <p className="text-sm text-blue-600">
+                  From: {('name' in selectedLocations[0] ? selectedLocations[0].name : selectedLocations[0].description)}
+                  <br />
+                  To: {('name' in selectedLocations[1] ? selectedLocations[1].name : selectedLocations[1].description)}
+                </p>
+              </div>
+            )}
+          </div>
 
           {loading ? (
             <div className="flex justify-center items-center h-96">
@@ -138,35 +250,122 @@ export function SiteMap() {
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 {sites.map(site => (
-                  <Marker 
-                    key={site.id} 
-                    position={[site.latitude as number, site.longitude as number]}
-                    eventHandlers={{ click: () => handleMarkerClick(site) }}
+                  site.latitude && site.longitude ? (
+                    <Marker
+                      key={site.id}
+                      position={[site.latitude, site.longitude]}
+                      eventHandlers={{
+                        click: () => {
+                          handleMarkerClick(site);
+                          handleLocationClick(site);
+                        }
+                      }}
+                    >
+                      <Popup>
+                        <div className="p-2">
+                          <h3 className="font-bold">{site.name}</h3>
+                          <p className="text-sm text-gray-600">{site.location}</p>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleLocationClick(site);
+                            }}
+                            className="mt-2 text-xs text-blue-600 hover:text-blue-800"
+                          >
+                            {selectedLocations.includes(site) ? 'Deselect' : 'Select for distance'}
+                          </button>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ) : null
+                ))}
+                
+                {/* Show points for selected site */}
+                {selectedSite && points.map(point => (
+                  <Marker
+                    key={point.id}
+                    position={[point.latitude, point.longitude]}
+                    icon={manualPointIcon}
                   >
                     <Popup>
-                      <div>
-                        <h3 className="font-medium text-gray-900">{site.name}</h3>
-                        <p className="text-sm text-gray-500">{site.location}</p>
-                        <button
-                          onClick={() => navigate(`/add-point/${site.id}`)}
-                          className="mt-2 px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-                      >
-                          Add Point
-                        </button>
+                      <div className="p-2">
+                        <p className="text-sm font-medium">{point.description}</p>
+                        <div className="flex space-x-2 mt-2">
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleLocationClick(point);
+                            }}
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                          >
+                            {selectedLocations.includes(point) ? 'Deselect' : 'Select for distance'}
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeletePoint(point.id);
+                            }}
+                            className="text-xs text-red-600 hover:text-red-800"
+                          >
+                            Delete Point
+                          </button>
+                        </div>
                       </div>
                     </Popup>
                   </Marker>
                 ))}
-                {points.map(point => (
-                  <Marker
-                    key={point.id}
-                    position={[point.latitude, point.longitude]}
+
+                {/* Path between selected points */}
+                {selectedLocations.length === 2 && (
+                  <>
+                    <Polyline
+                      positions={[ 
+                        [selectedLocations[0].latitude!, selectedLocations[0].longitude!], 
+                        [selectedLocations[1].latitude!, selectedLocations[1].longitude!] 
+                      ]}
+                      pathOptions={{
+                        color: 'blue',
+                        weight: 3,
+                        opacity: 0.7,
+                        dashArray: '5, 10'
+                      }}
+                    />
+                    {/* Add distance label directly on the map */}
+                    <Popup
+                      position={[ 
+                        (selectedLocations[0].latitude! + selectedLocations[1].latitude!) / 2, 
+                        (selectedLocations[0].longitude! + selectedLocations[1].longitude!) / 2 
+                      ]}
+                      permanent={true}
+                      className="distance-label"
+                    >
+                      <div className="bg-white px-2 py-1 rounded shadow text-sm font-medium">
+                        {calculateDistance(
+                          selectedLocations[0] as Point,
+                          selectedLocations[1] as Point
+                        ).toFixed(2)} km
+                      </div>
+                    </Popup>
+                  </>
+                )}
+
+                {/* Black connecting line for all points */}
+                {getAllPoints().length > 1 && (
+                  <Polyline
+                    positions={getAllPoints()}
+                    pathOptions={{
+                      color: 'black',
+                      weight: 2,
+                      opacity: 1
+                    }}
                   >
                     <Popup>
-                      <p>{point.description}</p>
+                      <div className="text-sm font-medium">
+                        Total path length: {calculateTotalDistance(getAllPoints()).toFixed(2)} km
+                      </div>
                     </Popup>
-                  </Marker>
-                ))}
+                  </Polyline>
+                )}
               </MapContainer>
             </div>
           )}

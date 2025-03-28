@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import { supabase } from '../lib/supabase';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -21,7 +21,16 @@ interface Point {
   description: string;
 }
 
-function LocationPicker({ onLocationSelect }: { onLocationSelect: (lat: number, lng: number) => void }) {
+interface PointWithId extends Point {
+  id: string;
+}
+
+interface LocationPickerProps {
+  onLocationSelect: (lat: number, lng: number) => void;
+  selectedPoint?: PointWithId;
+}
+
+function LocationPicker({ onLocationSelect, selectedPoint }: LocationPickerProps) {
   useMapEvents({
     click(e) {
       onLocationSelect(e.latlng.lat, e.latlng.lng);
@@ -40,6 +49,7 @@ export default function AddPoint() {
   });
   const [loading, setLoading] = useState(false);
   const [useGPS, setUseGPS] = useState(false);
+  const [existingPoint, setExistingPoint] = useState<PointWithId | null>(null);
 
   useEffect(() => {
     if (useGPS && navigator.geolocation) {
@@ -59,29 +69,99 @@ export default function AddPoint() {
     }
   }, [useGPS]);
 
+  useEffect(() => {
+    const loadPoint = async () => {
+      const pointId = new URLSearchParams(window.location.search).get('pointId');
+      if (!pointId) return;
+
+      try {
+        const { data, error } = await supabase
+          .from('site_points')
+          .select('*')
+          .eq('id', pointId)
+          .single();
+
+        if (error) throw error;
+        if (data) {
+          setExistingPoint(data as PointWithId);
+          setPoint({
+            latitude: data.latitude,
+            longitude: data.longitude,
+            description: data.description
+          });
+        }
+      } catch (error) {
+        console.error('Error loading point:', error);
+        toast.error('Failed to load point data');
+      }
+    };
+
+    loadPoint();
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      const { error } = await supabase
-        .from('site_points')
-        .insert([
-          {
-            site_id: siteId,
+      if (existingPoint) {
+        const { error } = await supabase
+          .from('site_points')
+          .update({
             latitude: point.latitude,
             longitude: point.longitude,
             description: point.description
-          }
-        ]);
+          })
+          .eq('id', existingPoint.id);
+
+        if (error) throw error;
+
+        toast.success('Point updated successfully');
+      } else {
+        const { error } = await supabase
+          .from('site_points')
+          .insert([
+            {
+              site_id: siteId,
+              latitude: point.latitude,
+              longitude: point.longitude,
+              description: point.description
+            }
+          ]);
+
+        if (error) throw error;
+
+        toast.success('Point added successfully');
+      }
+
+      navigate(`/site-details/${siteId}`);
+    } catch (error) {
+      console.error('Error saving point:', error);
+      toast.error('Failed to save point');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!existingPoint || !window.confirm('Are you sure you want to delete this point?')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('site_points')
+        .delete()
+        .eq('id', existingPoint.id);
 
       if (error) throw error;
 
-      toast.success('Point added successfully');
+      toast.success('Point deleted successfully');
       navigate(`/site-details/${siteId}`);
     } catch (error) {
-      console.error('Error adding point:', error);
-      toast.error('Failed to add point');
+      console.error('Error deleting point:', error);
+      toast.error('Failed to delete point');
     } finally {
       setLoading(false);
     }
@@ -109,7 +189,20 @@ export default function AddPoint() {
         </div>
 
         <div className="bg-white rounded-lg shadow-lg p-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-6">Add New Point</h1>
+          <div className="flex justify-between items-center mb-6">
+            <h1 className="text-2xl font-bold text-gray-900">
+              {existingPoint ? 'Edit Point' : 'Add New Point'}
+            </h1>
+            {existingPoint && (
+              <button
+                onClick={handleDelete}
+                className="flex items-center px-4 py-2 text-red-600 hover:text-red-800"
+              >
+                <Trash2 className="w-5 h-5 mr-2" />
+                Delete Point
+              </button>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div>
@@ -190,7 +283,7 @@ export default function AddPoint() {
                   disabled={loading}
                   className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
                 >
-                  {loading ? 'Adding Point...' : 'Add Point'}
+                  {loading ? 'Saving...' : existingPoint ? 'Update Point' : 'Add Point'}
                 </button>
               </form>
             </div>
