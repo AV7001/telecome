@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON } from 'react-leaflet';
 import { supabase } from '../lib/supabase';
-import { ArrowLeft, ArrowLeftCircle, PlusCircle } from 'lucide-react';
+import { ArrowLeft, PlusCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import * as turf from '@turf/turf';
@@ -9,7 +9,6 @@ import 'react-toastify/dist/ReactToastify.css';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { Tooltip } from 'react-leaflet';
-import { CircleIcon } from 'lucide-react';
 import { LatLngExpression } from 'leaflet';
 import { DOMParser } from '@xmldom/xmldom';
 import * as toGeoJSON from '@tmcw/togeojson';
@@ -129,11 +128,18 @@ export function SiteMap() {
   const [points, setPoints] = useState<Point[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<Array<Site | Point>>([]);
   const [fiberRoutes, setFiberRoutes] = useState<any[]>([]);
+  const [nearestFiberPoints, setNearestFiberPoints] = useState<{[key: string]: {point: number[], distance: number}}>({});
   const navigate = useNavigate();
 
   const calculateDistance = (point1: Point, point2: Point): number => {
     const from = turf.point([point1.longitude, point1.latitude]);
     const to = turf.point([point2.longitude, point2.latitude]);
+    return turf.distance(from, to, { units: 'kilometers' });
+  };
+
+  const calculateDistanceFromCoordinates = (point1: [number, number], point2: [number, number]): number => {
+    const from = turf.point([point1[1], point1[0]]);
+    const to = turf.point([point2[1], point2[0]]);
     return turf.distance(from, to, { units: 'kilometers' });
   };
 
@@ -165,6 +171,47 @@ export function SiteMap() {
     }
 
     return allPoints;
+  };
+
+  // Find the nearest fiber point to each site
+  const findNearestFiberPoints = () => {
+    const nearestPoints: {[key: string]: {point: number[], distance: number}} = {};
+    
+    sites.forEach(site => {
+      if (site.latitude && site.longitude) {
+        let minDistance = Infinity;
+        let closestPoint: number[] = [];
+        
+        fiberRoutes.forEach(route => {
+          if (route.geoJsonData && route.geoJsonData.features[0] && 
+              route.geoJsonData.features[0].geometry && 
+              route.geoJsonData.features[0].geometry.coordinates) {
+            
+            route.geoJsonData.features[0].geometry.coordinates.forEach((coord: number[]) => {
+              // Calculate distance between site and this fiber point
+              const distance = calculateDistanceFromCoordinates(
+                [site.latitude!, site.longitude!],
+                [coord[1], coord[0]]
+              );
+              
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestPoint = coord;
+              }
+            });
+          }
+        });
+        
+        if (closestPoint.length > 0) {
+          nearestPoints[site.id] = {
+            point: closestPoint,
+            distance: minDistance
+          };
+        }
+      }
+    });
+    
+    setNearestFiberPoints(nearestPoints);
   };
 
   useEffect(() => {
@@ -218,7 +265,7 @@ export function SiteMap() {
       try {
         const { data, error } = await supabase
           .from('fiber_routes')
-          .select('*'); // Remove the site_id filter to get all routes
+          .select('*');
 
         if (error) throw error;
 
@@ -244,7 +291,14 @@ export function SiteMap() {
     };
 
     loadFiberRoutes();
-  }, []); // Remove selectedSite dependency to load routes once
+  }, []);
+
+  // Run findNearestFiberPoints when both sites and fiberRoutes are loaded
+  useEffect(() => {
+    if (sites.length > 0 && fiberRoutes.length > 0) {
+      findNearestFiberPoints();
+    }
+  }, [sites, fiberRoutes]);
 
   const handleMarkerClick = (site: Site) => {
     setSelectedSite(site);
@@ -255,7 +309,6 @@ export function SiteMap() {
 
   const handleLocationClick = (location: Site | Point) => {
     setSelectedLocations(prev => {
-      // If location is already selected, remove it
       if (prev.find(p => 'latitude' in p && 'longitude' in p && 
           p.latitude === location.latitude && 
           p.longitude === location.longitude)) {
@@ -263,11 +316,9 @@ export function SiteMap() {
           p.latitude === location.latitude && 
           p.longitude === location.longitude));
       }
-      // If we already have 2 locations, replace the first one
       if (prev.length === 2) {
         return [location];
       }
-      // Add the new location
       return [...prev, location];
     });
   };
@@ -283,7 +334,6 @@ export function SiteMap() {
 
       if (error) throw error;
 
-      // Update points list after deletion
       setPoints(points.filter(point => point.id !== pointId));
       toast.success('Point deleted successfully');
     } catch (error) {
@@ -318,7 +368,6 @@ export function SiteMap() {
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-2xl font-bold text-gray-900">Site Locations</h1>
             
-            {/* Add distance summary panel */}
             {selectedLocations.length === 2 && (
               <div className="bg-blue-50 px-4 py-2 rounded-lg">
                 <p className="text-blue-800 font-medium">
@@ -387,7 +436,6 @@ export function SiteMap() {
                   ) : null
                 ))}
                 
-                {/* Show points for selected site */}
                 {selectedSite && points.map(point => (
                   <Marker
                     key={point.id}
@@ -422,7 +470,6 @@ export function SiteMap() {
                   </Marker>
                 ))}
 
-                {/* Path between selected points */}
                 {selectedLocations.length === 2 && (
                   <>
                     <Polyline
@@ -454,7 +501,6 @@ export function SiteMap() {
                   </>
                 )}
 
-                {/* Black connecting line for all points */}
                 {getAllPoints().length > 1 && (
                   <Polyline
                     positions={getAllPoints()}
@@ -472,7 +518,35 @@ export function SiteMap() {
                   </Polyline>
                 )}
 
-                {/* Render fiber routes */}
+                {/* Connect sites to nearest fiber points */}
+                {Object.entries(nearestFiberPoints).map(([siteId, data]) => {
+                  const site = sites.find(s => s.id === siteId);
+                  if (site && site.latitude && site.longitude) {
+                    return (
+                      <Polyline
+                        key={`site-to-fiber-${siteId}`}
+                        positions={[
+                          [site.latitude, site.longitude],
+                          [data.point[1], data.point[0]]
+                        ]}
+                        pathOptions={{
+                          color: 'green',
+                          weight: 2,
+                          opacity: 0.7,
+                          dashArray: '5, 5'
+                        }}
+                      >
+                        <Tooltip>
+                          <span className="bg-white px-2 py-1 rounded shadow text-sm font-medium">
+                            Distance to fiber: {data.distance.toFixed(2)} km
+                          </span>
+                        </Tooltip>
+                      </Polyline>
+                    );
+                  }
+                  return null;
+                })}
+
                 {fiberRoutes.map((route) => (
                   route.geoJsonData && (
                     <React.Fragment key={route.id}>
@@ -492,24 +566,58 @@ export function SiteMap() {
                           </div>
                         </Popup>
                       </GeoJSON>
-                      {/* Add markers for each point in the route */}
-                      {route.geoJsonData.features[0].geometry.coordinates.map((coord: number[], index: number) => (
-                        <Marker
-                          key={`${route.id}-point-${index}`}
-                          position={[coord[1], coord[0]]}
-                          icon={yellowMarkerIcon}
-                        >
-                          <Popup>
-                            <div className="p-2">
-                              <h3 className="font-bold">Route Point {index + 1}</h3>
-                              <p className="text-sm text-gray-600">
-                                Lat: {coord[1].toFixed(6)}<br />
-                                Lng: {coord[0].toFixed(6)}
-                              </p>
-                            </div>
-                          </Popup>
-                        </Marker>
-                      ))}
+                      
+                      {/* Map all coordinates from each feature */}
+                      {route.geoJsonData.features.map((feature: any, featureIndex: number) => {
+                        if (feature.geometry && feature.geometry.coordinates) {
+                          // Handle different geometry types
+                          let coordinates: number[][] = [];
+                          
+                          if (feature.geometry.type === 'LineString') {
+                            coordinates = feature.geometry.coordinates;
+                          } else if (feature.geometry.type === 'Point') {
+                            coordinates = [feature.geometry.coordinates];
+                          } else if (feature.geometry.type === 'MultiLineString') {
+                            // Flatten the multi-line coordinates
+                            coordinates = feature.geometry.coordinates.flat();
+                          }
+                          
+                          return coordinates.map((coord: number[], index: number, array: number[][]) => (
+                            <React.Fragment key={`${route.id}-feature-${featureIndex}-point-${index}`}>
+                              <Marker
+                                position={[coord[1], coord[0]]}
+                                icon={yellowMarkerIcon}
+                              >
+                                <Popup>
+                                  <div className="p-2">
+                                    <h3 className="font-bold">Route Point {index + 1}</h3>
+                                    <p className="text-sm text-gray-600">
+                                      Lat: {coord[1].toFixed(6)}<br />
+                                      Lng: {coord[0].toFixed(6)}
+                                    </p>
+                                  </div>
+                                </Popup>
+                              </Marker>
+                              
+                              {/* Draw polylines between consecutive points */}
+                              {index < array.length - 1 && (
+                                <Polyline
+                                  positions={[
+                                    [coord[1], coord[0]],
+                                    [array[index + 1][1], array[index + 1][0]]
+                                  ]}
+                                  pathOptions={{
+                                    color: 'yellow',
+                                    weight: 3,
+                                    opacity: 0.7
+                                  }}
+                                />
+                              )}
+                            </React.Fragment>
+                          ));
+                        }
+                        return null;
+                      })}
                     </React.Fragment>
                   )
                 ))}
