@@ -125,6 +125,54 @@ export function SiteDetails() {
     }
   };
 
+  const handleDeleteDevice = async (deviceId: string) => {
+    if (!window.confirm('Are you sure you want to delete this network device?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('network_devices')
+        .delete()
+        .eq('id', deviceId);
+
+      if (error) throw error;
+
+      await createNotification(
+        `Network device was deleted from site "${site?.name}"`,
+        'DEVICE_DELETE'
+      );
+
+      toast.success('Device deleted successfully');
+      loadSiteDetails();
+    } catch (error) {
+      console.error('Error:', error);
+      toast.error('Failed to delete device');
+    }
+  };
+
+  const handleDeleteRoute = async (routeId: string) => {
+    if (!window.confirm('Are you sure you want to delete this fiber route?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('fiber_routes')
+        .delete()
+        .eq('id', routeId);
+
+      if (error) throw error;
+
+      await createNotification(
+        `Fiber route was deleted from site "${site?.name}"`,
+        'ROUTE_DELETE'
+      );
+
+      toast.success('Route deleted successfully');
+      loadSiteDetails();
+    } catch (error) {
+      console.error('Error:', error);
+      toast.error('Failed to delete route');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -207,11 +255,27 @@ export function SiteDetails() {
             {site.network_devices.length > 0 ? (
               <div className="grid gap-4 md:grid-cols-2">
                 {site.network_devices.map(device => (
-                  <div key={device.id} className="bg-gray-50 p-4 rounded-lg">
+                  <div key={device.id} className="bg-gray-50 p-4 rounded-lg relative group">
+                    <button
+                      onClick={() => handleDeleteDevice(device.id)}
+                      className="absolute top-2 right-2 p-1 text-red-600 hover:text-red-800 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Delete device"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </button>
                     <p><span className="font-medium">Name:</span> {device.name}</p>
                     <p><span className="font-medium">Type:</span> {device.device_type}</p>
                     <p><span className="font-medium">IP:</span> {device.ip_address}</p>
-                    <p><span className="font-medium">Status:</span> {device.status}</p>
+                    <p>
+                      <span className="font-medium">Status:</span>
+                      <span className={`ml-2 px-2 py-1 rounded-full text-xs ${
+                        device.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        {device.status}
+                      </span>
+                    </p>
                   </div>
                 ))}
               </div>
@@ -226,7 +290,16 @@ export function SiteDetails() {
             {site.fiber_routes.length > 0 ? (
               <div className="grid gap-4 md:grid-cols-2">
                 {site.fiber_routes.map(route => (
-                  <div key={route.id} className="bg-gray-50 p-4 rounded-lg">
+                  <div key={route.id} className="bg-gray-50 p-4 rounded-lg relative group">
+                    <button
+                      onClick={() => handleDeleteRoute(route.id)}
+                      className="absolute top-2 right-2 p-1 text-red-600 hover:text-red-800 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Delete route"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </button>
                     <p><span className="font-medium">Description:</span> {route.description}</p>
                     <p><span className="font-medium">Created:</span> {new Date(route.created_at).toLocaleDateString()}</p>
                   </div>

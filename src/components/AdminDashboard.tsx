@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { PlusCircle, Users, MapPin, Router, Filter as Fiber, Image as ImageIcon, Network, Map, LogOut, Eye } from 'lucide-react';
+import { 
+  Building2, Users, MapPin, Router, Filter, Bell, Map, 
+  LogOut, Eye, PlusCircle, Network, Image as ImageIcon, Trash2 
+} from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
 import { SiteForm } from './SiteForm';
 import { NetworkDeviceForm } from './NetworkDeviceForm';
 import { FiberRouteForm } from './FiberRouteForm';
@@ -28,6 +31,7 @@ interface Site {
 
 interface NetworkDevice {
   id: string;
+  site_id: string;
   name: string;
   device_type: string;
   ip_address: string;
@@ -36,6 +40,7 @@ interface NetworkDevice {
 
 interface FiberRoute {
   id: string;
+  site_id: string;
   description: string;
   created_at: string;
 }
@@ -150,186 +155,203 @@ export function AdminDashboard() {
     }
   }
 
+  const menuItems = [
+    { title: 'Sites', icon: <Building2 className="w-6 h-6" />, count: sites.length },
+    { title: 'Network Devices', icon: <Router className="w-6 h-6" />, count: devices.length },
+    { title: 'Fiber Routes', icon: <Filter className="w-6 h-6" />, count: routes.length },
+    { title: 'Users', icon: <Users className="w-6 h-6" />, count: users.length }
+  ];
+
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Navbar */}
+      <nav className="bg-white shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex items-center">
+              <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
+            </div>
+            <div className="flex items-center space-x-4">
+              <button className="p-2 text-gray-400 hover:text-gray-500">
+                <Bell className="w-6 h-6" />
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex items-center px-4 py-2 text-gray-600 hover:text-gray-900"
+              >
+                <LogOut className="w-5 h-5 mr-2" />
+                Logout
+              </button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {notificationMessage && (
-          <Notification message={notificationMessage} onClose={() => setNotificationMessage('')} />
-        )}
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-          <div className="flex space-x-4">
+        {/* Quick Actions */}
+        <div className="mb-8">
+          <h2 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h2>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <button
+              onClick={() => setShowSiteForm(true)}
+              className="flex items-center p-4 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100"
+            >
+              <PlusCircle className="w-5 h-5 mr-3" />
+              Add New Site
+            </button>
             <Link
               to="/site-map"
-              className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+              className="flex items-center p-4 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100"
             >
-              <Map className="w-5 h-5 mr-2" />
-              View Map
+              <Map className="w-5 h-5 mr-3" />
+              View Site Map
             </Link>
             <Link
               to="/site-images"
-              className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              className="flex items-center p-4 bg-green-50 text-green-700 rounded-lg hover:bg-green-100"
             >
-              <ImageIcon className="w-5 h-5 mr-2" />
+              <ImageIcon className="w-5 h-5 mr-3" />
               Manage Images
             </Link>
-            <button 
-              onClick={() => setShowSiteForm(true)}
-              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              <PlusCircle className="w-5 h-5 mr-2" />
-              Add New Site
-            </button>
             <button
-              onClick={handleLogout}
-              className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+              onClick={() => setShowUserForm(true)}
+              className="flex items-center p-4 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100"
             >
-              <LogOut className="w-5 h-5 mr-2" />
-              Logout
+              <Users className="w-5 h-5 mr-3" />
+              Add User
             </button>
           </div>
         </div>
 
+        {/* Statistics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex items-center">
-              <MapPin className="w-8 h-8 text-blue-600" />
-              <div className="ml-4">
-                <h3 className="text-lg font-semibold">Total Sites</h3>
-                <p className="text-2xl font-bold">{sites.length}</p>
+          {menuItems.map((item) => (
+            <div key={item.title} className="bg-white rounded-lg shadow-sm p-6">
+              <div className="flex items-center">
+                {React.cloneElement(item.icon, { className: 'w-8 h-8 text-gray-500' })}
+                <div className="ml-4">
+                  <p className="text-lg font-medium text-gray-600">{item.title}</p>
+                  <p className="text-2xl font-semibold text-gray-900">{item.count}</p>
+                </div>
               </div>
             </div>
-          </div>
-          
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex items-center">
-              <Network className="w-8 h-8 text-green-600" />
-              <div className="ml-4">
-                <h3 className="text-lg font-semibold">Network Devices</h3>
-                <p className="text-2xl font-bold">{devices.length}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex items-center">
-              <Fiber className="w-8 h-8 text-purple-600" />
-              <div className="ml-4">
-                <h3 className="text-lg font-semibold">Fiber Routes</h3>
-                <p className="text-2xl font-bold">{routes.length}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex items-center">
-              <Users className="w-8 h-8 text-orange-600" />
-              <div className="ml-4">
-                <h3 className="text-lg font-semibold">Users</h3>
-                <p className="text-2xl font-bold">{users.length}</p>
-              </div>
-            </div>
-          </div>
+          ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Sites Section */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-xl font-semibold text-gray-800">Sites</h2>
-              <button
-                onClick={() => setShowSiteForm(true)}
-                className="text-blue-600 hover:text-blue-800"
-              >
-                <PlusCircle className="w-5 h-5" />
-              </button>
+        {/* Main Content */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Sites List */}
+          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex justify-between items-center">
+                <h2 className="text-lg font-medium text-gray-900">Sites</h2>
+                <button
+                  onClick={() => setShowSiteForm(true)}
+                  className="p-2 text-blue-600 hover:text-blue-800 rounded-full hover:bg-blue-50"
+                >
+                  <PlusCircle className="w-5 h-5" />
+                </button>
+              </div>
             </div>
-            <div className="p-6">
-              <div className="space-y-4">
-                {sites.map((site) => (
-                  <div key={site.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+            <div className="divide-y divide-gray-200 max-h-[600px] overflow-auto">
+              {sites.map((site) => (
+                <div key={site.id} className="p-4 hover:bg-gray-50">
+                  <div className="flex justify-between items-center">
                     <div>
-                      <h3 className="font-medium text-gray-900">{site.name}</h3>
+                      <h3 className="text-sm font-medium text-gray-900">{site.name}</h3>
                       <p className="text-sm text-gray-500">{site.location}</p>
                     </div>
                     <div className="flex space-x-2">
-                      <button
-                        onClick={() => navigate(`/admin/sites/${site.id}`)}
-                        className="text-blue-600 hover:text-blue-800"
-                      >
-                        <Eye className="w-5 h-5" />
-                      </button>
                       <button
                         onClick={() => {
                           setSelectedSite(site.id);
                           setShowNetworkForm(true);
                         }}
-                        className="text-green-600 hover:text-green-800"
+                        className="p-1 text-gray-400 hover:text-purple-600"
+                        title="Add Network Device"
                       >
-                        <Network className="w-5 h-5" />
+                        <Router className="w-5 h-5" />
                       </button>
                       <button
                         onClick={() => {
                           setSelectedSite(site.id);
                           setShowFiberForm(true);
                         }}
-                        className="text-purple-600 hover:text-purple-800"
+                        className="p-1 text-gray-400 hover:text-green-600"
+                        title="Add Fiber Route"
                       >
-                        <Fiber className="w-5 h-5" />
+                        <Filter className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={() => navigate(`/admin/sites/${site.id}`)}
+                        className="p-1 text-gray-400 hover:text-blue-600"
+                        title="View Site"
+                      >
+                        <Eye className="w-5 h-5" />
                       </button>
                       <button
                         onClick={() => handleDeleteSite(site.id)}
-                        className="text-red-600 hover:text-red-800"
+                        className="p-1 text-gray-400 hover:text-red-600"
+                        title="Delete Site"
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
+                        <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
                   </div>
-                ))}
-              </div>
+                  {/* Show associated devices and routes */}
+                  <div className="mt-2 pl-4 text-sm">
+                    <div className="flex space-x-4">
+                      <span className="text-purple-600">
+                        {devices.filter(d => d.site_id === site.id).length} Devices
+                      </span>
+                      <span className="text-green-600">
+                        {routes.filter(r => r.site_id === site.id).length} Routes
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
-          {/* Users Section */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-xl font-semibold text-gray-800">Users</h2>
-              <button
-                onClick={() => setShowUserForm(true)}
-                className="text-blue-600 hover:text-blue-800"
-              >
-                <PlusCircle className="w-5 h-5" />
-              </button>
+          {/* Users List */}
+          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex justify-between items-center">
+                <h2 className="text-lg font-medium text-gray-900">Users</h2>
+                <button
+                  onClick={() => setShowUserForm(true)}
+                  className="p-2 text-blue-600 hover:text-blue-800 rounded-full hover:bg-blue-50"
+                >
+                  <PlusCircle className="w-5 h-5" />
+                </button>
+              </div>
             </div>
-            <div className="p-6">
-              <div className="space-y-4">
-                {users.map((user) => (
-                  <div key={user.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+            <div className="divide-y divide-gray-200 max-h-[600px] overflow-auto">
+              {users.map((user) => (
+                <div key={user.id} className="p-4 hover:bg-gray-50">
+                  <div className="flex justify-between items-center">
                     <div>
-                      <h3 className="font-medium text-gray-900">{user.email}</h3>
+                      <h3 className="text-sm font-medium text-gray-900">{user.email}</h3>
                       <p className="text-sm text-gray-500 capitalize">{user.role}</p>
                     </div>
                     <div className="flex space-x-2">
                       <button
                         onClick={() => handleCreateTask(user.id)}
-                        className="text-blue-600 hover:text-blue-800"
+                        className="p-1 text-gray-400 hover:text-blue-600"
                       >
                         <PlusCircle className="w-5 h-5" />
                       </button>
                       <button
                         onClick={() => handleDeleteUser(user.id)}
-                        className="text-red-600 hover:text-red-800"
+                        className="p-1 text-gray-400 hover:text-red-600"
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
+                        <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON } from 'react-leaflet';
 import { supabase } from '../lib/supabase';
 import { ArrowLeft, ArrowLeftCircle, PlusCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -8,8 +8,11 @@ import * as turf from '@turf/turf';
 import 'react-toastify/dist/ReactToastify.css';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { Tooltip } from 'react-leaflet';
 import { CircleIcon } from 'lucide-react';
 import { LatLngExpression } from 'leaflet';
+import { DOMParser } from '@xmldom/xmldom';
+import * as toGeoJSON from '@tmcw/togeojson';
 
 // Fix for default marker icons in React Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -18,6 +21,18 @@ L.Icon.Default.mergeOptions({
   iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
   shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
 });
+
+// Helper functions for coordinate transformation
+const transformCoordinates = (coordinates: number[][]): number[][] => {
+  return coordinates.map(coord => [coord[1], coord[0]]); // Swap lat/long for Leaflet
+};
+
+const onEachFeature = (feature: any, layer: any) => {
+  if (feature.geometry.type === 'LineString') {
+    const coordinates = transformCoordinates(feature.geometry.coordinates);
+    layer.setLatLngs(coordinates);
+  }
+};
 
 interface Site {
   id: string;
@@ -37,6 +52,18 @@ interface Point {
 
 interface AllPoints extends Array<[number, number]> {}
 
+interface GeoJsonData {
+  type: string;
+  features: Array<{
+    type: string;
+    geometry: {
+      type: string;
+      coordinates: number[][];
+    };
+    properties: any;
+  }>;
+}
+
 // Add custom icon for manual points
 const manualPointIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
@@ -48,6 +75,52 @@ const manualPointIcon = new L.Icon({
   shadowAnchor: [12, 41]
 });
 
+// Add custom icon for fiber route points
+const yellowMarkerIcon = new L.Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+  shadowSize: [41, 41],
+  shadowAnchor: [12, 41]
+});
+
+const parseKMLData = (kmlString: string): GeoJsonData | null => {
+  try {
+    // Ensure KML string is properly formatted
+    if (!kmlString || !kmlString.trim()) {
+      console.error('Empty KML data');
+      return null;
+    }
+
+    const parser = new DOMParser();
+    const kmlDoc = parser.parseFromString(kmlString, 'text/xml');
+
+    // Check for parsing errors
+    const parserError = kmlDoc.getElementsByTagName('parsererror');
+    if (parserError.length > 0) {
+      console.error('XML parsing error:', parserError[0].textContent);
+      return null;
+    }
+
+    // Convert KML to GeoJSON
+    const geoJsonData = toGeoJSON.kml(kmlDoc);
+    console.log('Converted GeoJSON:', geoJsonData);
+
+    // Validate GeoJSON data
+    if (!geoJsonData || !geoJsonData.features || geoJsonData.features.length === 0) {
+      console.error('Invalid KML data: No features found');
+      return null;
+    }
+
+    return geoJsonData as GeoJsonData;
+  } catch (error) {
+    console.error('Error parsing KML:', error);
+    return null;
+  }
+};
+
 export function SiteMap() {
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedSite, setSelectedSite] = useState<Site | null>(null);
@@ -55,6 +128,7 @@ export function SiteMap() {
   const [center, setCenter] = useState<[number, number]>([27.7172, 85.3240]);
   const [points, setPoints] = useState<Point[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<Array<Site | Point>>([]);
+  const [fiberRoutes, setFiberRoutes] = useState<any[]>([]);
   const navigate = useNavigate();
 
   const calculateDistance = (point1: Point, point2: Point): number => {
@@ -138,6 +212,39 @@ export function SiteMap() {
       loadPoints();
     }
   }, [selectedSite]);
+
+  useEffect(() => {
+    const loadFiberRoutes = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('fiber_routes')
+          .select('*'); // Remove the site_id filter to get all routes
+
+        if (error) throw error;
+
+        const routesWithGeoJson = data?.map(route => {
+          if (!route.route_data) return { ...route, geoJsonData: null };
+          
+          console.log('Raw KML data:', route.route_data);
+          const geoJsonData = parseKMLData(route.route_data);
+          return {
+            ...route,
+            geoJsonData
+          };
+        }) || [];
+
+        const validRoutes = routesWithGeoJson.filter(route => route.geoJsonData !== null);
+        console.log('Valid routes:', validRoutes);
+        
+        setFiberRoutes(validRoutes);
+      } catch (error) {
+        console.error('Error loading fiber routes:', error);
+        toast.error('Failed to load fiber routes');
+      }
+    };
+
+    loadFiberRoutes();
+  }, []); // Remove selectedSite dependency to load routes once
 
   const handleMarkerClick = (site: Site) => {
     setSelectedSite(site);
@@ -330,22 +437,20 @@ export function SiteMap() {
                         dashArray: '5, 10'
                       }}
                     />
-                    {/* Add distance label directly on the map */}
-                    <Popup
-                      position={[ 
-                        (selectedLocations[0].latitude! + selectedLocations[1].latitude!) / 2, 
-                        (selectedLocations[0].longitude! + selectedLocations[1].longitude!) / 2 
+                    <Tooltip
+                      position={[
+                        (selectedLocations[0].latitude! + selectedLocations[1].latitude!) / 2,
+                        (selectedLocations[0].longitude! + selectedLocations[1].longitude!) / 2
                       ]}
-                      permanent={true}
-                      className="distance-label"
+                      permanent
                     >
-                      <div className="bg-white px-2 py-1 rounded shadow text-sm font-medium">
+                      <span className="bg-white px-2 py-1 rounded shadow text-sm font-medium">
                         {calculateDistance(
                           selectedLocations[0] as Point,
                           selectedLocations[1] as Point
                         ).toFixed(2)} km
-                      </div>
-                    </Popup>
+                      </span>
+                    </Tooltip>
                   </>
                 )}
 
@@ -366,6 +471,48 @@ export function SiteMap() {
                     </Popup>
                   </Polyline>
                 )}
+
+                {/* Render fiber routes */}
+                {fiberRoutes.map((route) => (
+                  route.geoJsonData && (
+                    <React.Fragment key={route.id}>
+                      <GeoJSON 
+                        data={route.geoJsonData}
+                        style={() => ({
+                          color: '#FF0000',
+                          weight: 3,
+                          opacity: 1,
+                          fillOpacity: 0.2
+                        })}
+                        onEachFeature={onEachFeature}
+                      >
+                        <Popup>
+                          <div className="p-2">
+                            <h3 className="font-bold">{route.description}</h3>
+                          </div>
+                        </Popup>
+                      </GeoJSON>
+                      {/* Add markers for each point in the route */}
+                      {route.geoJsonData.features[0].geometry.coordinates.map((coord: number[], index: number) => (
+                        <Marker
+                          key={`${route.id}-point-${index}`}
+                          position={[coord[1], coord[0]]}
+                          icon={yellowMarkerIcon}
+                        >
+                          <Popup>
+                            <div className="p-2">
+                              <h3 className="font-bold">Route Point {index + 1}</h3>
+                              <p className="text-sm text-gray-600">
+                                Lat: {coord[1].toFixed(6)}<br />
+                                Lng: {coord[0].toFixed(6)}
+                              </p>
+                            </div>
+                          </Popup>
+                        </Marker>
+                      ))}
+                    </React.Fragment>
+                  )
+                ))}
               </MapContainer>
             </div>
           )}

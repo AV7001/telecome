@@ -2,12 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { X, Trash, Edit } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { DOMParser } from '@xmldom/xmldom';
+import * as toGeoJSON from '@tmcw/togeojson';
 
 interface FiberRoute {
   id: string;
   route_data: string;
   description: string;
 }
+
+import { FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
+import { text } from 'express';
+
+interface GeoJsonData extends FeatureCollection<Geometry | null, GeoJsonProperties> {}
 
 interface FiberRouteFormProps {
   onClose: () => void;
@@ -19,7 +26,8 @@ interface FiberRouteFormProps {
 export function FiberRouteForm({ onClose, onSuccess, siteId, selectedRoute }: FiberRouteFormProps): JSX.Element {
   const [formData, setFormData] = useState({
     route_data: '',
-    description: ''
+    description: '',
+    geoJsonData: null as GeoJsonData | null
   });
 
   useEffect(() => {
@@ -27,29 +35,96 @@ export function FiberRouteForm({ onClose, onSuccess, siteId, selectedRoute }: Fi
       setFormData({
         route_data: selectedRoute.route_data,
         description: selectedRoute.description,
+        geoJsonData: null
       });
     }
   }, [selectedRoute]);
 
+  const parseKMLData = (kmlString: string) => {
+    try {
+      // Ensure KML string has proper XML structure
+      if (!kmlString.includes('<?xml')) {
+        kmlString = `<?xml version="1.0" encoding="UTF-8"?>${kmlString}`;
+      }
+
+      const parser = new DOMParser();
+      const kmlDoc = parser.parseFromString(kmlString, 'text/xml');
+      
+      // Check for parsing errors
+      const parserError = kmlDoc.getElementsByTagName('parsererror');
+      if (parserError.length > 0) {
+        console.error('XML parsing error:', parserError[0].textContent);
+        return null;
+      }
+
+      const geoJsonData = toGeoJSON.kml(kmlDoc) as GeoJsonData;
+      
+      // Validate GeoJSON data
+      if (!geoJsonData || !geoJsonData.features || geoJsonData.features.length === 0) {
+        console.error('Invalid KML data: No features found');
+        return null;
+      }
+
+      console.log('Parsed GeoJSON:', geoJsonData);
+      return geoJsonData;
+    } catch (error) {
+      console.error('Error parsing KML:', error);
+      return null;
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      console.log('Raw KML text:', text);
+
+      const geoJsonData = parseKMLData(text);
+      if (!geoJsonData) {
+        toast.error('Invalid KML file format');
+        return;
+      }
+
+      setFormData(prev => ({
+        ...prev,
+        route_data: text,
+        geoJsonData
+      }));
+      toast.success('KML file loaded successfully');
+    } catch (error) {
+      console.error('Error reading file:', error);
+      toast.error('Failed to read KML file');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.route_data || !formData.description) {
+      toast.error('Please provide both route data and description');
+      return;
+    }
+
     try {
+      const routeData = {
+        site_id: siteId,
+        route_data: formData.route_data,
+        description: formData.description,
+        geo_json: formData.geoJsonData // Store the parsed GeoJSON as well
+      };
+
       const { data, error } = await supabase
         .from('fiber_routes')
-        .insert([{
-          site_id: siteId,
-          route_data: formData.route_data,
-          description: formData.description
-        }]);
+        .insert([routeData]);
 
       if (error) throw error;
 
-      console.log('Fiber route saved successfully:', data);
       toast.success('Fiber route saved successfully!');
       onSuccess();
       onClose();
-    } catch (err) {
-      console.error('Error saving fiber route:', err);
+    } catch (error) {
+      console.error('Error saving fiber route:', error);
       toast.error('Failed to save fiber route');
     }
   };
@@ -70,14 +145,26 @@ export function FiberRouteForm({ onClose, onSuccess, siteId, selectedRoute }: Fi
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Route Data (KML/KMZ)
               </label>
-              <textarea
-                required
-                value={formData.route_data}
-                onChange={(e) => setFormData({ ...formData, route_data: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                rows={10}
-                placeholder="Paste KML/KMZ data here..."
-              />
+              <div className="space-y-2">
+                <input
+                  type="file"
+                  accept=".kml,.kmz"
+                  onChange={handleFileUpload}
+                  className="block w-full text-sm text-gray-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-full file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-blue-50 file:text-blue-700
+                    hover:file:bg-blue-100"
+                />
+                <textarea
+                  value={formData.route_data}
+                  onChange={(e) => setFormData({ ...formData, route_data: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={10}
+                  placeholder="Or paste KML data here..."
+                />
+              </div>
             </div>
 
             <div>
