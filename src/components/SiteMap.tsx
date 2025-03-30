@@ -61,6 +61,7 @@ interface GeoJsonData {
     };
     properties: any;
   }>;
+  properties?: any;
 }
 
 // Add custom icon for manual points
@@ -103,15 +104,31 @@ const parseKMLData = (kmlString: string): GeoJsonData | null => {
       return null;
     }
 
+    // Extract route name from KML document (if available at document level)
+    const routeName = kmlDoc.getElementsByTagName('name')[0]?.textContent || null;
+    console.log('Route name from KML:', routeName);
+
     // Convert KML to GeoJSON
     const geoJsonData = toGeoJSON.kml(kmlDoc);
     console.log('Converted GeoJSON:', geoJsonData);
+
+    // Add the route name to the GeoJSON object if it exists
+    if (routeName) {
+      geoJsonData.properties = geoJsonData.properties || {};
+      geoJsonData.properties.name = routeName;
+    }
 
     // Validate GeoJSON data
     if (!geoJsonData || !geoJsonData.features || geoJsonData.features.length === 0) {
       console.error('Invalid KML data: No features found');
       return null;
     }
+
+    // Log names of features to help with debugging
+    geoJsonData.features.forEach((feature, index) => {
+      console.log(`Feature ${index} name:`, feature.properties?.name);
+      console.log(`Feature ${index} description:`, feature.properties?.description);
+    });
 
     // Ensure all coordinates are valid numbers
     const sanitizedFeatures = geoJsonData.features.map(feature => {
@@ -618,14 +635,36 @@ export function SiteMap() {
                           opacity: 1,
                           fillOpacity: 0.2
                         })}
-                        onEachFeature={onEachFeature}
-                      >
-                        <Popup>
-                          <div className="p-2">
-                            <h3 className="font-bold">{route.description || 'Fiber Route'}</h3>
-                          </div>
-                        </Popup>
-                      </GeoJSON>
+                        onEachFeature={(feature, layer) => {
+                          onEachFeature(feature, layer);
+                          
+                          // Add popup with name from KML properties if available
+                          if (feature.properties) {
+                            const popupContent = document.createElement('div');
+                            popupContent.className = 'p-2';
+                            
+                            const title = document.createElement('h3');
+                            title.className = 'font-bold';
+                            
+                            // Use the KML name if available, otherwise use feature description or default
+                            title.textContent = feature.properties.name || 
+                                              feature.properties.description || 
+                                              route.description || 
+                                              'Fiber Route';
+                            
+                            popupContent.appendChild(title);
+                            
+                            if (feature.properties.description && feature.properties.description !== feature.properties.name) {
+                              const description = document.createElement('p');
+                              description.className = 'text-sm text-gray-600';
+                              description.textContent = feature.properties.description;
+                              popupContent.appendChild(description);
+                            }
+                            
+                            layer.bindPopup(popupContent);
+                          }
+                        }}
+                      />
                       
                       {/* Map all coordinates from each feature */}
                       {route.geoJsonData.features.map((feature, featureIndex) => {
@@ -680,7 +719,14 @@ export function SiteMap() {
                                 >
                                   <Popup>
                                     <div className="p-2">
-                                      <h3 className="font-bold">Route Point {index + 1}</h3>
+                                      {/* Use location name from KML if available */}
+                                      <h3 className="font-bold">
+                                        {feature.properties && feature.properties.name ? 
+                                          feature.properties.name : 
+                                          (feature.properties && feature.properties.description ? 
+                                            feature.properties.description : 
+                                            `Route Point ${index + 1}`)}
+                                      </h3>
                                       <p className="text-sm text-gray-600">
                                         Lat: {coord[1].toFixed(6)}<br />
                                         Lng: {coord[0].toFixed(6)}
