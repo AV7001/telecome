@@ -113,7 +113,44 @@ const parseKMLData = (kmlString: string): GeoJsonData | null => {
       return null;
     }
 
-    return geoJsonData as GeoJsonData;
+    // Ensure all coordinates are valid numbers
+    const sanitizedFeatures = geoJsonData.features.map(feature => {
+      if (feature.geometry && feature.geometry.coordinates) {
+        if (feature.geometry.type === 'LineString') {
+          // For LineString geometries
+          feature.geometry.coordinates = feature.geometry.coordinates
+            .filter(coord => Array.isArray(coord) && coord.length >= 2)
+            .map(coord => coord.map(c => typeof c === 'string' ? parseFloat(c) : c))
+            .filter(coord => coord.every(c => !isNaN(c) && isFinite(c)));
+        } else if (feature.geometry.type === 'Point') {
+          // For Point geometries
+          if (Array.isArray(feature.geometry.coordinates)) {
+            feature.geometry.coordinates = feature.geometry.coordinates
+              .map(c => typeof c === 'string' ? parseFloat(c) : c)
+              .filter(c => !isNaN(c) && isFinite(c));
+          }
+        } else if (feature.geometry.type === 'MultiLineString') {
+          // For MultiLineString geometries
+          feature.geometry.coordinates = feature.geometry.coordinates
+            .map(lineString =>
+              lineString
+                .filter(coord => Array.isArray(coord) && coord.length >= 2)
+                .map(coord => coord.map(c => typeof c === 'string' ? parseFloat(c) : c))
+                .filter(coord => coord.every(c => !isNaN(c) && isFinite(c)))
+            )
+            .filter(lineString => lineString.length > 0);
+        }
+      }
+      return feature;
+    });
+
+    // Recreate the GeoJSON object with sanitized features
+    const sanitizedGeoJson = {
+      ...geoJsonData,
+      features: sanitizedFeatures
+    };
+
+    return sanitizedGeoJson as GeoJsonData;
   } catch (error) {
     console.error('Error parsing KML:', error);
     return null;
@@ -183,20 +220,40 @@ export function SiteMap() {
         let closestPoint: number[] = [];
         
         fiberRoutes.forEach(route => {
-          if (route.geoJsonData && route.geoJsonData.features[0] && 
-              route.geoJsonData.features[0].geometry && 
-              route.geoJsonData.features[0].geometry.coordinates) {
-            
-            route.geoJsonData.features[0].geometry.coordinates.forEach((coord: number[]) => {
-              // Calculate distance between site and this fiber point
-              const distance = calculateDistanceFromCoordinates(
-                [site.latitude!, site.longitude!],
-                [coord[1], coord[0]]
-              );
-              
-              if (distance < minDistance) {
-                minDistance = distance;
-                closestPoint = coord;
+          if (route.geoJsonData && route.geoJsonData.features) {
+            route.geoJsonData.features.forEach(feature => {
+              if (feature.geometry && feature.geometry.coordinates) {
+                let coords = [];
+                
+                // Extract coordinates based on geometry type
+                if (feature.geometry.type === 'LineString') {
+                  coords = feature.geometry.coordinates;
+                } else if (feature.geometry.type === 'Point') {
+                  coords = [feature.geometry.coordinates];
+                } else if (feature.geometry.type === 'MultiLineString') {
+                  coords = feature.geometry.coordinates.flat();
+                }
+                
+                // Process each coordinate point
+                coords.forEach(coord => {
+                  // Skip invalid coordinates
+                  if (!Array.isArray(coord) || coord.length < 2 || 
+                      typeof coord[0] !== 'number' || typeof coord[1] !== 'number' ||
+                      isNaN(coord[0]) || isNaN(coord[1])) {
+                    return;
+                  }
+                  
+                  // Calculate distance between site and this fiber point
+                  const distance = calculateDistanceFromCoordinates(
+                    [site.latitude!, site.longitude!],
+                    [coord[1], coord[0]]
+                  );
+                  
+                  if (distance < minDistance) {
+                    minDistance = distance;
+                    closestPoint = coord;
+                  }
+                });
               }
             });
           }
@@ -521,7 +578,10 @@ export function SiteMap() {
                 {/* Connect sites to nearest fiber points */}
                 {Object.entries(nearestFiberPoints).map(([siteId, data]) => {
                   const site = sites.find(s => s.id === siteId);
-                  if (site && site.latitude && site.longitude) {
+                  if (site && site.latitude && site.longitude && 
+                      Array.isArray(data.point) && data.point.length >= 2 &&
+                      typeof data.point[0] === 'number' && typeof data.point[1] === 'number' &&
+                      !isNaN(data.point[0]) && !isNaN(data.point[1])) {
                     return (
                       <Polyline
                         key={`site-to-fiber-${siteId}`}
@@ -562,45 +622,82 @@ export function SiteMap() {
                       >
                         <Popup>
                           <div className="p-2">
-                            <h3 className="font-bold">{route.description}</h3>
+                            <h3 className="font-bold">{route.description || 'Fiber Route'}</h3>
                           </div>
                         </Popup>
                       </GeoJSON>
                       
                       {/* Map all coordinates from each feature */}
-                      {route.geoJsonData.features.map((feature: any, featureIndex: number) => {
+                      {route.geoJsonData.features.map((feature, featureIndex) => {
                         if (feature.geometry && feature.geometry.coordinates) {
                           // Handle different geometry types
-                          let coordinates: number[][] = [];
+                          let coordinates = [];
                           
                           if (feature.geometry.type === 'LineString') {
-                            coordinates = feature.geometry.coordinates;
+                            // Make sure each coordinate is valid
+                            coordinates = feature.geometry.coordinates.filter(coord => 
+                              Array.isArray(coord) && 
+                              coord.length >= 2 && 
+                              typeof coord[0] === 'number' && 
+                              typeof coord[1] === 'number' &&
+                              !isNaN(coord[0]) && 
+                              !isNaN(coord[1])
+                            );
                           } else if (feature.geometry.type === 'Point') {
-                            coordinates = [feature.geometry.coordinates];
+                            // For point geometry
+                            const coord = feature.geometry.coordinates;
+                            if (Array.isArray(coord) && 
+                                coord.length >= 2 && 
+                                typeof coord[0] === 'number' && 
+                                typeof coord[1] === 'number' &&
+                                !isNaN(coord[0]) && 
+                                !isNaN(coord[1])) {
+                              coordinates = [coord];
+                            }
                           } else if (feature.geometry.type === 'MultiLineString') {
-                            // Flatten the multi-line coordinates
-                            coordinates = feature.geometry.coordinates.flat();
+                            // For MultiLineString, flatten and filter valid coordinates
+                            coordinates = feature.geometry.coordinates
+                              .flat()
+                              .filter(coord => 
+                                Array.isArray(coord) && 
+                                coord.length >= 2 && 
+                                typeof coord[0] === 'number' && 
+                                typeof coord[1] === 'number' &&
+                                !isNaN(coord[0]) && 
+                                !isNaN(coord[1])
+                              );
                           }
                           
-                          return coordinates.map((coord: number[], index: number, array: number[][]) => (
+                          return coordinates.map((coord, index, array) => (
                             <React.Fragment key={`${route.id}-feature-${featureIndex}-point-${index}`}>
-                              <Marker
-                                position={[coord[1], coord[0]]}
-                                icon={yellowMarkerIcon}
-                              >
-                                <Popup>
-                                  <div className="p-2">
-                                    <h3 className="font-bold">Route Point {index + 1}</h3>
-                                    <p className="text-sm text-gray-600">
-                                      Lat: {coord[1].toFixed(6)}<br />
-                                      Lng: {coord[0].toFixed(6)}
-                                    </p>
-                                  </div>
-                                </Popup>
-                              </Marker>
+                              {/* Only create a marker if the coordinates are valid numbers */}
+                              {Array.isArray(coord) && coord.length >= 2 && 
+                               typeof coord[0] === 'number' && typeof coord[1] === 'number' &&
+                               !isNaN(coord[0]) && !isNaN(coord[1]) && (
+                                <Marker
+                                  position={[coord[1], coord[0]]}
+                                  icon={yellowMarkerIcon}
+                                >
+                                  <Popup>
+                                    <div className="p-2">
+                                      <h3 className="font-bold">Route Point {index + 1}</h3>
+                                      <p className="text-sm text-gray-600">
+                                        Lat: {coord[1].toFixed(6)}<br />
+                                        Lng: {coord[0].toFixed(6)}
+                                      </p>
+                                    </div>
+                                  </Popup>
+                                </Marker>
+                              )}
                               
-                              {/* Draw polylines between consecutive points */}
-                              {index < array.length - 1 && (
+                              {/* Draw polylines between consecutive points only if both points are valid */}
+                              {index < array.length - 1 && 
+                               Array.isArray(coord) && coord.length >= 2 && 
+                               Array.isArray(array[index + 1]) && array[index + 1].length >= 2 &&
+                               typeof coord[0] === 'number' && typeof coord[1] === 'number' &&
+                               typeof array[index + 1][0] === 'number' && typeof array[index + 1][1] === 'number' &&
+                               !isNaN(coord[0]) && !isNaN(coord[1]) &&
+                               !isNaN(array[index + 1][0]) && !isNaN(array[index + 1][1]) && (
                                 <Polyline
                                   positions={[
                                     [coord[1], coord[0]],
